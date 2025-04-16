@@ -2,78 +2,115 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 import numpy as np
-import tqdm
 import joblib
-from collections import OrderedDict
-
+from collections import Counter
+import os
 
 def preprocess_data(data_file, output_dir):
     """
-    Exercice : Fonction pour prétraiter les données brutes et les préparer pour l'entraînement de modèles.
+    Preprocesses raw data for training machine learning models.
 
-    Objectifs :
-    1. Charger les données brutes à partir d’un fichier CSV.
-    2. Nettoyer les données (par ex. : supprimer les valeurs manquantes).
-    3. Encoder les labels catégoriels (colonne `family_accession`) en entiers.
-    4. Diviser les données en ensembles d’entraînement, de validation et de test selon une logique définie.
-    5. Sauvegarder les ensembles prétraités et des métadonnées utiles.
-
-    Indices :
-    - Utilisez `LabelEncoder` pour encoder les catégories.
-    - Utilisez `train_test_split` pour diviser les indices des données.
-    - Utilisez `to_csv` pour sauvegarder les fichiers prétraités.
-    - Calculez les poids de classes en utilisant les comptes des classes.
+    Steps:
+    1. Load the data from a CSV file.
+    2. Handle missing values by dropping rows with NaN values.
+    3. Encode categorical labels in the 'family_accession' column.
+    4. Split the data into train, dev, and test sets based on class distribution.
+    5. Save the processed datasets and metadata (e.g., label encoder, class weights).
     """
 
     # Step 1: Load the data
-    print('Loading Data')
-    # data = pd.read_csv(...)
+    print('Loading data...')
+    data = pd.read_csv(data_file)
 
     # Step 2: Handle missing values
-    # data = data.dropna()
+    print('Handling missing values...')
+    data = data.dropna()
 
-    # Step 3: Encode the 'family_accession' to numeric labels
-    # label_encoder = LabelEncoder()
-    # data['class_encoded'] = label_encoder.fit_transform(...)
+    # Step 3: Encode the 'family_accession' column to numeric labels
+    print('Encoding labels...')
+    label_encoder = LabelEncoder()
+    data['class_encoded'] = label_encoder.fit_transform(data['family_accession'])
 
-    # Save the label encoder
-    # joblib.dump(...)
+    # Save the label encoder for future use
+    os.makedirs(output_dir, exist_ok=True)
+    label_encoder_path = os.path.join(output_dir, 'label_encoder.pkl')
+    joblib.dump(label_encoder, label_encoder_path)
+    print(f"Label encoder saved to {label_encoder_path}")
 
     # Save the label mapping to a text file
-    # with open(...)
+    label_mapping_path = os.path.join(output_dir, 'label_mapping.txt')
+    with open(label_mapping_path, 'w') as f:
+        for class_label, class_name in enumerate(label_encoder.classes_):
+            f.write(f"{class_label}: {class_name}\n")
+    print(f"Label mapping saved to {label_mapping_path}")
 
-    # Step 4: Distribute data
-    # For each unique class:
-    # - If count == 1: go to test set
-    # - If count == 2: 1 to dev, 1 to test
-    # - If count == 3: 1 to train, 1 to dev, 1 to test
-    # - Else: stratified split (train/dev/test)
+    # Step 4: Split the data into train, dev, and test sets
+    print('Splitting data into train, dev, and test sets...')
+    train_indices = []
+    dev_indices = []
+    test_indices = []
 
-    print("Distributing data")
-    # for cls in tqdm.tqdm(...):
+    for cls, group in data.groupby('class_encoded'):
+        indices = group.index.tolist()
+        if len(indices) == 1:
+            test_indices.extend(indices)
+        elif len(indices) == 2:
+            dev_indices.append(indices[0])
+            test_indices.append(indices[1])
+        elif len(indices) == 3:
+            train_indices.append(indices[0])
+            dev_indices.append(indices[1])
+            test_indices.append(indices[2])
+        else:
+            train, temp = train_test_split(indices, test_size=0.4, random_state=42, stratify=group['class_encoded'])
+            dev, test = train_test_split(temp, test_size=0.5, random_state=42, stratify=data.loc[temp, 'class_encoded'])
+            train_indices.extend(train)
+            dev_indices.extend(dev)
+            test_indices.extend(test)
 
-        # Logic for assigning indices to train/dev/test
+    # Step 5: Create DataFrames for train, dev, and test sets
+    train_df = data.loc[train_indices].reset_index(drop=True)
+    dev_df = data.loc[dev_indices].reset_index(drop=True)
+    test_df = data.loc[test_indices].reset_index(drop=True)
 
-    # Step 5: Convert index lists to numpy arrays
+    # Step 6: Drop unused columns
+    print('Dropping unused columns...')
+    columns_to_drop = ['family_id', 'sequence_name']  # Adjust based on your dataset
+    train_df = train_df.drop(columns=columns_to_drop, errors='ignore')
+    dev_df = dev_df.drop(columns=columns_to_drop, errors='ignore')
+    test_df = test_df.drop(columns=columns_to_drop, errors='ignore')
 
-    # Step 6: Create DataFrames from the selected indices
+    # Step 7: Save the train, dev, and test datasets
+    print('Saving datasets...')
+    train_path = os.path.join(output_dir, 'train.csv')
+    dev_path = os.path.join(output_dir, 'dev.csv')
+    test_path = os.path.join(output_dir, 'test.csv')
 
-    # Step 7: Drop unused columns: family_id, sequence_name, etc.
+    train_df.to_csv(train_path, index=False)
+    dev_df.to_csv(dev_path, index=False)
+    test_df.to_csv(test_path, index=False)
 
-    # Step 8: Save train/dev/test datasets as CSV
-    # df.to_csv(...)
+    print(f"Train dataset saved to {train_path}")
+    print(f"Dev dataset saved to {dev_path}")
+    print(f"Test dataset saved to {test_path}")
 
-    # Step 9: Calculate class weights from the training set
-    # class_counts = ...
-    # class_weights = ...
+    # Step 8: Calculate class weights from the training set
+    print('Calculating class weights...')
+    class_counts = Counter(train_df['class_encoded'])
+    total_samples = sum(class_counts.values())
+    class_weights = {cls: total_samples / count for cls, count in class_counts.items()}
 
-    # Step 10: Normalize weights and scale
+    # Normalize weights
+    max_weight = max(class_weights.values())
+    class_weights = {cls: weight / max_weight for cls, weight in class_weights.items()}
 
-    # Step 11: Save the class weights
-    # with open(...)
+    # Save class weights
+    class_weights_path = os.path.join(output_dir, 'class_weights.json')
+    with open(class_weights_path, 'w') as f:
+        f.write(str(class_weights))
+    print(f"Class weights saved to {class_weights_path}")
 
-    pass
-
+    print('Preprocessing complete!')
 
 if __name__ == "__main__":
     import argparse
